@@ -7,13 +7,17 @@ import os.path
 from scipy import ndimage
 import random
 import copy
+import sys
 
 # global
 # 本当は　インスタンスメンバにすべき
 learn_weight = 0.02
 sigmoid_a = 1.0
-is_sigmoid = 1
+is_sigmoid = 0
 layer_num = 3
+
+
+img_s_flg = 0
 
 # 各種学習中のパラメータを入れる箱
 # layer_num => int()
@@ -34,67 +38,104 @@ def make_data_set(paths, ans):
 		data = {}
 		data['img'] = Image.open(f)
 		data['ans'] = ans
+		data['name'] = f
+		data['arr'] = before_filter(data['img'])
 		data_set.append(data)
 	return data_set
 
+# 学習に使用しないデータで確認
+def test(test_data_set):
+	global learn_data
+	err_sum = 0.0
+	success = 0
+	data_num = len(test_data_set)
+
+	print "test result"
+
+	for data_set in test_data_set:
+		arr = data_set['arr']
+		ans = data_set['ans']
+		name = data_set['name']
+		err = forward_all(arr, ans)
+		result = learn_data['result']
+		err_sum += err
+		pred = 1
+		if(result < 0.5):
+			pred = 0
+		if(pred == ans):
+			success += 1
+		print name + " pred: " + str(result) + " ans: " + str(ans) 
+
+	print "test result \n"
+	print str(success) + "/" + str(data_num) 
+	print "errs = " + str(err_sum/ data_num) 
+
 # 確率的勾配降下法で学習
-def learn(data_set, limit_err = 0.01):
+def learn(data_set, limit_err = 0.2):
+	global layer_num, learn_data
 	learn_data['err'] = 0
 	learn_data['layer_num'] = layer_num
 	layers = []
 	for i in range(layer_num): 
 		layer = {}
-		layers.append()
+		layers.append(layer)
 
-		layers[1]['W'] = np.random.rand(64, 64*64+1)/(64*64+1)
-		layers[2]['W'] = np.random.rand(1, 65)/65
+	layers[1]['W'] = np.random.rand(64, 64*64+1)/(64*64+1)
+	layers[2]['W'] = np.random.rand(1, 65)/65
 
 	learn_data['layers'] = layers
-	crt_err = limit_err + 1 
+	err_sum = limit_err + 1.0
 
 	loop_c = 0
 
-	while crt_err > limit_err:
+	while err_sum > limit_err:
 		crt_err = 0
 		# shuffle
 		size = len(data_set)
 		index_list = range(size)
 		random.shuffle(index_list)
 		for index in index_list:
+			#print " learn"
+			#print index
+			#print data_set[index]['name']
 			err = learn_one(data_set[index])
 			crt_err += err
 
 		loop_c += 1
-		if(loop_c > 1000):
+		err_sum = crt_err/len(index_list)
+		print "err = "
+		print err_sum
+		if(loop_c > 100):
+			sys.stderr.write('not solved ')
 			break
 
-	return crt_err
+		print "loop"
+		print loop_c
+
+	return err_sum
+
+# 重み付けws を表示
+def print_W():
+	global layer_num
+	for i in range(layer_num - 1):
+		print  learn_data['layers'][i+1]['W']
 
 # 一データに対し、学習し、誤差を返す
 def learn_one(data):
-	img = data['img']
-	arr = before_filter(img)
+	global learn_data
+	# print data
+	arr = data['arr']
+	ans = data['ans']
+	err = forward_all(arr, ans)
 	layer_sum = learn_data['layer_num']
-
-	learn_data['layers'][0]['ys'] =  copy.copy(arr) # 参照渡し　対策
 	
-	# 回路を前へ回す
-	for i in range(learn_data['layer_num']-1):
-		parent_layer = learn_data['layers'][i]
-		layer = learn_data['layers'][i+1]
-		arr = forward(parent_layer['ys'], layer['W'])
-		layer['ys'] = copy.copy(arr)
-
-	learn_data['result'] = learn_data['layers'][layer_sum -1]['ys'][0]
-	err = learn_data['result'] - data['ans']
-
 	# 逆伝播
 	for i in range(learn_data['layer_num']-1):
 		index = layer_sum - i - 1 # 2,1
 		if(index == layer_sum - 1):  # 最後尾
 			ws = learn_data['layers'][index]['W']
-			xs = learn_data['layers'][index]['ys']
-			ret = backward(ws, xs, learn_data['result'])
+			xs = learn_data['layers'][index-1]['ys']
+			ret = backward(ws, xs, learn_data['result'], np.array([ans]))
 			new_ws = ret['new_ws']
 			delta_vec = ret['delta_vec']
 		else:
@@ -112,14 +153,41 @@ def learn_one(data):
 	learn_data['layers'][1]['W'] = copy.copy(new_ws)
 	return err
 
+# 一回,回す
+def forward_all(arr, ans):
+	global learn_data
+	layer_sum = learn_data['layer_num']
+	learn_data['layers'][0]['ys'] =  copy.copy(arr) # 参照渡し　対策
+	
+	for i in range(learn_data['layer_num']-1):
+		parent_layer = learn_data['layers'][i]
+		layer = learn_data['layers'][i+1]
+		arr = forward(parent_layer['ys'], layer['W'])
+		layer['ys'] = copy.copy(arr)
+
+	learn_data['result'] = learn_data['layers'][layer_sum -1]['ys'][0]
+	err = learn_data['result'] - ans
+	if(err < 0.0):
+		err = -err
+
+	#print "forward_all"
+	#for i in range(layer_sum):
+	#	print  learn_data['layers'][i]['ys']
+	return err 
+
 # 画像前処理
 # 256*256 => 64*64 になる
 def before_filter(img):
-	im = np.array(im.convert('L'))/256.0
+	global img_s_flg
+	im = np.array(img.convert('L'))/256.0
 	im = max_pooling(im)
 	im = div_img(1.0, im)
+	#im = laplacian(im)
 	im = max_pooling(im)
-	im = div_img(1.0, im)	
+	#im = div_img(1.0, im)	
+	if img_s_flg == 0:
+		Image.fromarray(im*256).show()
+		img_s_flg = 1
 	arr = convert_arr_from_img(im)
 	return arr
 
@@ -170,9 +238,9 @@ def apply_filter(fil, img):
 
 # 重み配列(2次元)　でarrayから値を計算
 def forward(arr, ws):
-	applied = apply_each(np.dot(ws, arr), activation)	
-	return np.append(applied, 1)
-
+	xs = np.append(arr, 1) # 定数項付加
+	return apply_vector(np.dot(ws, xs), activation)	
+	
 # 行列の各要素に適応
 def apply_each(mat, fun):
 	# 要素が1つの時、2次元配列にならず、1次元になってしまう対策
@@ -183,20 +251,32 @@ def apply_each(mat, fun):
 			mat[x,y] = fun(mat[x,y])
 	return mat
 
+def get_matrix_width(mat):
+	if(mat.size == 1):
+		return 1
+	if(mat.ndim == 1):
+		return mat.size
+	return mat[0].size
+
 # vector の各要素に作用
 def apply_vector(vec, fun):
+	# 要素が1つの時, スカラーになってしまう
+	if vec.size == 1:
+		return fun(vec)
 	for n in xrange(vec.size):
 		vec[n] = fun(vec[n])
 	return vec
 
 
 def activation(x):
+	global is_sigmoid
 	if (is_sigmoid == 1):
 		return sigmoid(x)
 	return np.maximum(0,x)
 
 # activation の微分を得る ただし引数は sigmoid(x) = y
 def dif_activation(y):
+	global sigmoid_a, is_sigmoid
 	if (is_sigmoid == 1):
 		return sigmoid_a * y * (1.0 - y)
 
@@ -208,17 +288,15 @@ def dif_activation(y):
 def sigmoid(x, a = 1.0):
 	return 1.0/(1.0+np.exp(-x*a))
 
-# 定数係数を付加したarr に変換
+# arr に変換
 def convert_arr_from_img(img):
 	size = img.size
-	arr = img.reshape(size, 1)
-	arr = np.append(arr,[-1.0])
-	#arr = arr.reshape(arr.size, 1)
-	arr = np.c_[arr]
+	arr = img.reshape(1,size)
+	arr = arr[0] # 1次元ベクトルに
 	return arr
 
 # correct_ys を計算し、ws を更新する 更新されたwsが返る(非破壊的　たぶん)
-def backward(ws, xs, ys):
+def backward(ws, xs, ys, correct_ys):
 	delta_vec = (ys - correct_ys) * apply_vector(ys, dif_activation)
 	return _backward(ws, xs, ys, delta_vec)
 
@@ -229,20 +307,31 @@ def backward_in_hidden_layer(ws, xs,  ys, child_ws, child_delta_vec):
 # 引数　ws:重みづけ2次元ベクトル　xs:入力　ys:出力(vector)　correct_xs:正しい出力
 # delta: vector 
 def _backward(ws, xs, ys, delta_vec):
-	del_mat = np.transpose( get_same_array(delta_vec, xs.size))
-	diag_arr = np.diag(xs)
+	global learn_weight
+	del_mat = np.transpose( get_same_array(delta_vec, xs.size + 1))
+	diag_arr = np.diag(np.append(xs,1))
 	new_ws = ws - learn_weight * np.dot(del_mat, diag_arr) 
-	return {'new_ws' => new_ws, 'delta_vec' => delta_vec}
+	return {'new_ws':new_ws, 'delta_vec':delta_vec}
 
 # 隠れ層のデルタを計算
 def calc_delta_vec_in_hidden_layer(ys, child_ws, child_delta_vec):
-	return np.dot(child_ws, child_delta_vec) * sigmoid_a* ((np.ones(ys.size) - ys) * ys)
+	global sigmoid_a
+	w_size_in_child_ws = get_matrix_width(child_ws)
+	if child_ws.ndim == 1: # 1次元の場合、転置できないため例外対応
+		mod_child_ws = child_ws[0:w_size_in_child_ws-1].reshape([w_size_in_child_ws - 1, 1])
+	else:
+		mod_child_ws = (np.transpose(child_ws))[0:w_size_in_child_ws - 1] # 転置して定数項の部分を削除
+	
+	return np.dot(mod_child_ws, child_delta_vec) * sigmoid_a* ((np.ones(ys.size) - ys) * ys)
 
 # [[arr],
 #  [arr],
 # [arr]] の配列を得る
 def get_same_array(arr, h):
-	n_arr = zeros([h, arr.size])
+	if arr.ndim > 1 and arr.size != arr[0].size:
+		print "warning!! invalid arr shape "
+		sys.stderr.write(str(arr.shape))
+	n_arr = np.zeros([h, arr.size])
 	n_arr[0:h] = arr
 	return n_arr
 
@@ -253,8 +342,10 @@ def main():
 	f_paths_k =  glob.glob('./Pictures/teach/koala/*')
 	f_paths_o = glob.glob('./Pictures/teach/other/*')
 	data_set = make_data_set(f_paths_k, 1.0)
-	data_set.append(make_data_set(f_paths_o, 0.0))
+	data_set +=  make_data_set(f_paths_o, 0.0)
 
+	print "all dataset = "
+	print len(data_set)
 	# 無作為に学習データと検証データを選別
 	learn_data_set = []
 	test_data_set = []
@@ -271,8 +362,13 @@ def main():
 			learn_data_set.append(data_set[index])
 		else:
 			test_data_set.append(data_set[index])
+		count += 1
 
-
+	print learn_data_set
+	learn(learn_data_set)
+	print_W()
+	test(test_data_set)
+	#test(learn_data_set)
 	return
 
 if __name__ == '__main__':
