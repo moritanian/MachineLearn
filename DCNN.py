@@ -22,6 +22,7 @@ img_s_flg = 0
 
 # 各種学習中のパラメータを入れる箱
 # layer_num => int()
+# thres => double()
 # err  => double()
 # result => double()
 # input_width > int()
@@ -70,6 +71,7 @@ def test(test_data_set):
 		name = data_set['name']
 		err = forward_all(arr, ans)
 		result = learn_data['result']
+		data_set['result'] = result
 		err_sum += err
 		pred = 1
 		if(result < 0.5):
@@ -77,15 +79,41 @@ def test(test_data_set):
 		if(pred == ans):
 			success += 1
 		#print name + " pred: " + str(result) + " ans: " + str(ans) 
+	thres = calc_optimum_thres(test_data_set)
+	learn_data['thres'] = thres
+	print "optimum threthold ="
+	print thres
 
 	print str(success) + "/" + str(data_num) 
 	print "errs = " + str(err_sum/ data_num) 
 
+def calc_optimum_thres(data_list):
+	err_min = 1.0
+	for data in data_list:
+		err = calc_err_by_thres(data_list, data['result'])
+		#print errs
+		if err_min > err:
+			err_min = err
+			thres = data['result']
+
+	#thres = 0.4
+	return thres
+
+def calc_err_by_thres(data_list, thres):
+	err = 0
+	for data in data_list:
+		if (data['result'] - thres)*data['ans'] < 0: # あるものをないと推測 
+			err += 0.5
+		elif (data['result'] - thres)*(1.0 - data['ans']) >0: # ないものをあると予測
+			err += 1.0
+	return err /len(data_list)
+
 # 確率的勾配降下法で学習
-def learn(data_set, limit_err = 0.06):
+def learn(data_set, limit_err = 0.07):
 	global layer_num, learn_data, TestDataSet
 	learn_data['err'] = 0
 	learn_data['layer_num'] = layer_num
+	learn_data['thres'] = 0.5
 	layers = []
 	for i in range(layer_num): 
 		layer = {}
@@ -209,12 +237,13 @@ def before_filter(img):
 
 def before_filter_img(img):
 	global img_s_flg
-	im = np.array(img.convert('L'))/256.0
+	c_img = copy.copy(img)
+	im = np.array(c_img.convert('L'))/256.0
 	#im = max_pooling(im)
 	#im = div_img(1.5, im)
 	im = gaussian_img(im)
-	im = ndimage.sobel(im/256.0, axis=1, mode='constant')*256.0
-	#im = laplacian(im)
+	#im = ndimage.sobel(im/256.0, axis=1, mode='constant')*256.0
+	im = laplacian(im)
 	im = max_pooling(im)
 	#im = div_img(1.0, im)	
 	return im
@@ -266,7 +295,7 @@ def apply_filter(fil, img):
 
 # 重み配列(2次元)　でarrayから値を計算
 def forward(arr, ws):
-	xs = np.append(arr, 1) # 定数項付加
+	xs = np.append(arr, 1.0) # 定数項付加
 	return apply_vector(np.dot(ws, xs), activation)	
 	
 # 行列の各要素に適応
@@ -368,35 +397,42 @@ def search(data_set):
 	w_h = 2
 	h_h = 2
 	data_num = len(data_set)
+	print learn_data['input_width']
+	print learn_data['input_height']
 	for data in data_set:
 		pos_list = search_one(data['img'])
 		print pos_list
+		flamed_img =  data['img'].convert('RGB')
 		for pos_data in pos_list:
-			pos1 = {'x': pos_data['pos']['x'] * w_h, 'y':   pos_data['pos']['y'] * h_h }
+			pos1 = {'x': (pos_data['pos']['x']) * w_h, 'y':  (pos_data['pos']['y']) * h_h }
 			pos2 = {'x': (pos_data['pos']['x'] +learn_data['input_width'])* w_h, 'y': (pos_data['pos']['y'] + learn_data['input_height'])*h_h }
-			flamed_img = add_flame(data['img'], pos_data['pos'], pos2)
-			flamed_img.show()
+			
+			add_flame(flamed_img, pos1, pos2)
+		flamed_img.show()
 	
 	return 
 
 # 枠をつけた画像を返す
 def add_flame(img, pos1, pos2, color = (255,0,0)):
-	flamed_img =  img.convert('RGB')
+	print "size"
+	print pos1
+	print pos2
+	print img.size
 	y1 = pos1['y']
-	y2 = pos2['y']
-	for x0 in xrange(pos2['x'] - pos1['x']):
+	y2 = pos2['y'] - 1
+	for x0 in xrange(pos2['x'] - pos1['x'] -1):
 		x1 = x0 + pos1['x']
-		flamed_img.putpixel((x1,y1), color)
-		flamed_img.putpixel((x1, y2), color)
+		img.putpixel((x1,y1), color)
+		img.putpixel((x1, y2), color)
 
 	x1 = pos1['x']
-	x2 = pos2['x']
-	for y0 in xrange(pos2['y'] - pos1['y']):
+	x2 = pos2['x'] - 1
+	for y0 in xrange(pos2['y'] - pos1['y'] -1):
 		y1 = y0 + pos1['y']
-		flamed_img.putpixel((x1,y1), color)
-		flamed_img.putpixel((x2, y1), color)
+		img.putpixel((x1,y1), color)
+		img.putpixel((x2, y1), color)
 
-	return flamed_img
+	return
 
 
 # pos_list = [
@@ -415,26 +451,34 @@ def search_one(img):
 	width = im.size[0]
 	height = im.size[1]
 	print width
-	print learn_data['input_width']
-	for x in range(width - learn_data['input_width'] + 1):
-		for y in range(height - learn_data['input_height'] + 1):
+	print height
+	max_result = 0.0
+	for y in range(height - learn_data['input_height'] + 1):
+		for x in range(width - learn_data['input_width'] + 1):
+			if x < 1:
+				continue
+		
 			sliced_img = im.crop((x, y, x + learn_data['input_width'], y+ learn_data['input_height']))
 			arr = convert_arr_from_img(np.array(sliced_img)/256.0)
 			forward_all(arr, 0)
 			result = learn_data['result']
+			if max_result < result:
+				max_result = result
 			pred = 0
-			if(result > 0.5):
+			if(result > learn_data['thres']):
 				pred = 1
-				near_index = get_near_pos({'x':x, 'y': y}, pos_list, width, height)
+				near_index = get_near_pos({'x':x, 'y': y}, pos_list, learn_data['input_width'], learn_data['input_height'])
 				if(near_index == -1): # 近いのがないときは新規登録
 
 					pos_data = {'pos' : {'x':x, 'y':y}, 'result':result}
 					pos_list.append(pos_data)
 				else: # 近いのがあるときは比較 
-					nearest_pos_data = pos_list[near_index]
+					nearest_pos_data = copy.copy(pos_list[near_index])
 					if result > nearest_pos_data['result']: # 更新
 						pos_list[near_index] =  {'pos' : {'x':x, 'y':y}, 'result':result}
 	
+	print "max_result = "
+	print max_result
 	return pos_list
 
 # pos が与えられた際に一番近いposをpos_listの中から見つける ただし基準以上離れている場合は対象としない
@@ -446,11 +490,13 @@ def get_near_pos(pos, pos_list, width, height):
 		o_pos = pos_data['pos']
 		_w = abs(pos['x'] - o_pos['x'])
 		_h = abs(pos['y'] - o_pos['y'])
-		if _w < width /2 and  _h < height/2:
+		if _w < width  and  _h < height :
 			if m_dis > _w + _h:
 				near_index = index
 				m_dis = _w + _h
 		index += 1
+
+	#near_index = -1
 	return near_index
 
 
@@ -490,8 +536,8 @@ def main():
 
 	# search data set
 	search_data_set = []
-	for i in range(10):
-		path = "./CarData/TestImages/test-" + str(i) + ".pgm"
+	for i in range(30):
+		path = "./CarData/TestImages/test-" + str(i+20) + ".pgm"
 		data = {}
 		data['img'] = Image.open(path)
 		data['name'] = path
