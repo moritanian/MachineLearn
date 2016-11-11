@@ -9,11 +9,12 @@ import random
 import copy
 import sys
 import time
+import math
+import import_cifar
 
 # global
-# 本当は　インスタンスメンバにすべき
 learn_weight = 0.02
-sigmoid_a = 1.0
+sigmoid_a = 1.9
 is_sigmoid = 1
 layer_num = 3
 
@@ -21,26 +22,37 @@ layer_num = 3
 img_s_flg = 0
 
 # 各種学習中のパラメータを入れる箱
-# layer_num => int()
-# thres => double()
-# err  => double()
-# result => double()
-# input_width > int()
-# input_height => int()
-# input_arr_size => int()
-# layers => {
+# learn_data
+# {
+#	id => (int)
+# 	layer_num => int()
+# 	thres => double()
+# 	err  => double()
+# 	result => double()
+# 	layers => {
 #				[
 #					ys => vector
 #					W => matrix		
 #				], ...		
 #			}
-#			
-learn_data = {}
+# }
+
+
+# input data info
+# input_data 
+# {
+# 	input_arr_size
+# 	input_width     # 訓練データbefore?filter後サイズ
+# 	input_height
+# 		
+# }
+input_data ={}
+
 
 TestDataSet = []
 
 def make_data_set(paths, ans):
-	global learn_data;
+	global input_data;
 	data_set = []
 	for f in paths:
 		data = {}
@@ -51,38 +63,47 @@ def make_data_set(paths, ans):
 		data_set.append(data)
 
 	# 入力画像一般情報	
-	learn_data['input_arr_size'] = data['arr'].size
-	print "input_arr_size = " + str(learn_data['input_arr_size'] )
+	input_data['input_arr_size'] = data['arr'].size
+	print "input_arr_size = " + str(input_data['input_arr_size'] )
 	
 	return data_set
 
 # 凡化性能の確認
-def test(test_data_set):
-	global learn_data
+def test(learn_data, test_data_set):
 	err_sum = 0.0
 	success = 0
 	data_num = len(test_data_set)
+	is_multi = 0
+	if (len(test_data_set[0]['ans']) > 1):
+		is_multi = 1
 
 	print "test result"
 
 	for data_set in test_data_set:
 		arr = data_set['arr']
 		ans = data_set['ans']
-		name = data_set['name']
-		err = forward_all(arr, ans)
-		result = learn_data['result']
+		result = forward_all(learn_data, arr, is_multi)
+		err = calc_rss(result, ans)/len(ans)
 		data_set['result'] = result
 		err_sum += err
-		pred = 1
-		if(result < 0.5):
-			pred = 0
-		if(pred == ans):
-			success += 1
+
+		# fixme m
+		# できれば　multi と ２値を統一したい
+		if(len(ans) == 1):
+			pred = 1
+			if(result < 0.5):
+				pred = 0
+			if(pred == ans[0]):
+				success += 1
+		else:
+			max_index = np.argmax(np.array(result))
+			if(ans[max_index]):
+				success += 1 
 		#print name + " pred: " + str(result) + " ans: " + str(ans) 
-	thres = calc_optimum_thres(test_data_set)
-	learn_data['thres'] = thres
-	print "optimum threthold ="
-	print thres
+	#thres = calc_optimum_thres(test_data_set)
+	#learn_data['thres'] = thres
+	#print "optimum threthold ="
+	#print thres
 
 	print str(success) + "/" + str(data_num) 
 	print "errs = " + str(err_sum/ data_num) 
@@ -109,18 +130,18 @@ def calc_err_by_thres(data_list, thres):
 	return err /len(data_list)
 
 # 確率的勾配降下法で学習
-def learn(data_set, limit_err = 0.07):
-	global layer_num, learn_data, TestDataSet
+def learn(learn_data, data_set, limit_err = 0.01):
+	global layer_num, TestDataSet, input_data
 	learn_data['err'] = 0
 	learn_data['layer_num'] = layer_num
-	learn_data['thres'] = 0.5
+	learn_data['thres'] = 0.7
 	layers = []
 	for i in range(layer_num): 
 		layer = {}
 		layers.append(layer)
 
 
-	layers[1]['W'] = np.random.rand(180, learn_data['input_arr_size']+1)/(learn_data['input_arr_size'] +1)/2.0
+	layers[1]['W'] = np.random.rand(180, input_data['input_arr_size']+1)/(input_data['input_arr_size'] +1)/2.0
 	layers[2]['W'] = np.random.rand(1, 181)/65/2.0
 	#layers[1]['W'] = np.random.rand(64, 64*64+1)/(64*64+1)/2.0
 	#layers[2]['W'] = np.random.rand(1, 65)/65/2.0
@@ -132,16 +153,16 @@ def learn(data_set, limit_err = 0.07):
 
 	while err_sum > limit_err:
 		crt_err = 0
+		max_zero_err = 0.0 # 真の答えが０の時の予測値の最大
 		# shuffle
 		size = len(data_set)
 		index_list = range(size)
 		random.shuffle(index_list)
 		for index in index_list:
-			#print " learn"
-			#print index
-			#print data_set[index]['name']
-			err = learn_one(data_set[index])
+			err = learn_one(learn_data ,data_set[index])
 			crt_err += err
+			if(data_set[index]['ans'][0] == 0 and max_zero_err < err):
+				max_zero_err = err
 
 		loop_c += 1
 		err_sum = crt_err/len(index_list)
@@ -156,23 +177,79 @@ def learn(data_set, limit_err = 0.07):
 
 		# 凡化性能と過学習を調べる
 		if(loop_c > 200):
-			test(TestDataSet)
+			test(learn_data ,TestDataSet)
 
-	return err_sum
+
+	learn_data['thres'] = 0.5 + math.sqrt(max_zero_err) # err 二乗されたものがかえっているためもとに戻す
+	print "thres = "
+	print learn_data['thres'] 
+
+	# 多変数識別
+	# data_set
+	#	{
+	#		'img' 	=> img
+	#		'ans'	=> [0, 0 , 0, 0 .. ,0, 1, 0, .. 0]
+	#	}
+def learn_multi(learn_data, data_set, limit_err = 0.01):
+	global input_data
+	learn_data['err'] = 0
+	learn_data['layer_num'] = layer_num
+	learn_data['thres'] = 0.5
+	ans_num = len(data_set[0]['ans']) # データの種類
+	layers = []
+	for i in range(layer_num): 
+		layer = {}
+		layers.append(layer)
+
+
+	layers[1]['W'] = np.random.rand(320, input_data['input_arr_size']+1)/(input_data['input_arr_size'] +1)/2.0
+	layers[2]['W'] = np.random.rand(ans_num, 321)/320.0
+	learn_data['layers'] = layers
+	err_ave = limit_err + 1.0
+	loop_c = 0
+
+	while err_ave > limit_err:
+		err_sqr = 0
+		# shuffle
+		size = len(data_set)
+		index_list = range(size)
+		random.shuffle(index_list)
+		for index in index_list:
+				#print " learn"
+				#print index
+				#print data_set[index]['name']
+			err = learn_one(learn_data ,data_set[index])
+			err_sqr += err
+
+		loop_c += 1
+		err_ave = err_sqr/len(index_list)
+		print "err = "
+		print err_ave
+		if(loop_c > 200):
+			sys.stderr.write('not solved ')
+			break
+
+		print "loop"
+		print loop_c
+	return err_ave
 
 # 重み付けws を表示
-def print_W():
+def print_W(learn_data):
 	global layer_num
 	for i in range(layer_num - 1):
 		print  learn_data['layers'][i+1]['W']
 
 # 一データに対し、学習し、誤差を返す
-def learn_one(data):
-	global learn_data
+def learn_one(learn_data, data):
 	# print data
 	arr = data['arr']
 	ans = data['ans']
-	err = forward_all(arr, ans)
+	is_multi = 0
+	if len(ans) > 1:
+		is_multi = 1
+
+	result = forward_all(learn_data, arr, is_multi)
+	err = calc_rss(result, ans)/len(ans)
 	layer_sum = learn_data['layer_num']
 	
 	# 逆伝播
@@ -181,7 +258,12 @@ def learn_one(data):
 		if(index == layer_sum - 1):  # 最後尾
 			ws = learn_data['layers'][index]['W']
 			xs = learn_data['layers'][index-1]['ys']
-			ret = backward(ws, xs, learn_data['result'], np.array([ans]))
+			if(is_multi):	# ソフトマックスの場合、式が異なる
+				delta_vec = copy.copy(result) - np.array(ans)*np.ones(len(ans))
+				ret =  _backward(ws, xs, result, delta_vec)
+			else:
+				ret = backward(ws, xs, learn_data['result'], np.array(ans))
+			
 			new_ws = ret['new_ws']
 			delta_vec = ret['delta_vec']
 		else:
@@ -199,38 +281,39 @@ def learn_one(data):
 	learn_data['layers'][1]['W'] = copy.copy(new_ws)
 	return err
 
+def calc_rss(result, ans):
+	diff = np.array(result) - np.array(ans)
+	return np.dot(diff, diff)
+
 # 一回,回す
-def forward_all(arr, ans):
-	global learn_data
+def forward_all(learn_data, arr, is_multi = 0):
 	layer_sum = learn_data['layer_num']
 	learn_data['layers'][0]['ys'] =  copy.copy(arr) # 参照渡し　対策
-	
+
 	for i in range(learn_data['layer_num']-1):
 		parent_layer = learn_data['layers'][i]
 		layer = learn_data['layers'][i+1]
-		arr = forward(parent_layer['ys'], layer['W'])
+		if(is_multi == 1 and i+2 == layer_sum ): #複数識別で最後尾は活性化関数をソフトマックスに
+			f_arr = forward_without_activation(parent_layer['ys'], layer['W'])
+			arr = soft_max(f_arr)
+		else:
+			arr = forward(parent_layer['ys'], layer['W'])
 		layer['ys'] = copy.copy(arr)
 
-	learn_data['result'] = learn_data['layers'][layer_sum -1]['ys'][0]
-	err = learn_data['result'] - ans
-	if(err < 0.0):
-		err = -err
-
-	#print "forward_all"
-	#for i in range(layer_sum):
-	#	print  learn_data['layers'][i]['ys']
-	return err 
+	learn_data['result'] = learn_data['layers'][layer_sum -1]['ys']
+	
+	return learn_data['result']
 
 # 画像前処理
 # 256*256 => 64*64 になる
 def before_filter(img):
-	global img_s_flg
+	global img_s_flg, input_data
 	im = before_filter_img(img)
 	if img_s_flg == 0:
 		Image.fromarray(im*256).show()
 		img_s_flg = 1
-		learn_data['input_height'] = Image.fromarray(im).size[1]
-		learn_data['input_width'] = Image.fromarray(im).size[0]
+		input_data['input_height'] = Image.fromarray(im).size[1]
+		input_data['input_width'] = Image.fromarray(im).size[0]
 
 	arr = convert_arr_from_img(im)
 	return arr
@@ -241,10 +324,10 @@ def before_filter_img(img):
 	im = np.array(c_img.convert('L'))/256.0
 	#im = max_pooling(im)
 	#im = div_img(1.5, im)
-	im = gaussian_img(im)
+	#im = gaussian_img(im)
 	#im = ndimage.sobel(im/256.0, axis=1, mode='constant')*256.0
-	im = laplacian(im)
-	im = max_pooling(im)
+	#im = laplacian(im)
+	#im = max_pooling(im)
 	#im = div_img(1.0, im)	
 	return im
 
@@ -295,9 +378,13 @@ def apply_filter(fil, img):
 
 # 重み配列(2次元)　でarrayから値を計算
 def forward(arr, ws):
+	return apply_vector(forward_without_activation(arr, ws), activation)	# 活性化関数を通す
+
+def forward_without_activation(arr, ws):
 	xs = np.append(arr, 1.0) # 定数項付加
-	return apply_vector(np.dot(ws, xs), activation)	
-	
+	return np.dot(ws, xs)	
+
+
 # 行列の各要素に適応
 def apply_each(mat, fun):
 	# 要素が1つの時、2次元配列にならず、1次元になってしまう対策
@@ -345,6 +432,18 @@ def dif_activation(y):
 def sigmoid(x, a = 1.0):
 	return 1.0/(1.0+np.exp(-x*a))
 
+def soft_max(x_arr):
+	parent_e = 0.0
+	for x in x_arr:
+		parent_e += np.exp(x)
+	y_arr = np.empty(x_arr.size)
+	index = 0
+	for x in x_arr:
+		y_arr[index] = np.exp(x)/parent_e
+		index+=1.0
+
+	return y_arr
+
 # arr に変換
 def convert_arr_from_img(img):
 	size = img.size
@@ -352,7 +451,7 @@ def convert_arr_from_img(img):
 	arr = arr[0] # 1次元ベクトルに
 	return arr
 
-# correct_ys を計算し、ws を更新する 更新されたwsが返る(非破壊的　たぶん)
+# correct_ys を計算し、ws を更新する 更新されたwsが返る(非破壊的　たぶん) 最後尾のみ
 def backward(ws, xs, ys, correct_ys):
 	delta_vec = (ys - correct_ys) * apply_vector(ys, dif_activation)
 	return _backward(ws, xs, ys, delta_vec)
@@ -393,19 +492,20 @@ def get_same_array(arr, h):
 	return n_arr
 
 # 一般の画像から場所を特定する施行
-def search(data_set):
+def search(learn_data, data_set):
+	global input_data
 	w_h = 2
 	h_h = 2
 	data_num = len(data_set)
-	print learn_data['input_width']
-	print learn_data['input_height']
+	print input_data['input_width']
+	print input_data['input_height']
 	for data in data_set:
-		pos_list = search_one(data['img'])
+		pos_list = search_one(learn_data, data['img'])
 		print pos_list
 		flamed_img =  data['img'].convert('RGB')
 		for pos_data in pos_list:
 			pos1 = {'x': (pos_data['pos']['x']) * w_h, 'y':  (pos_data['pos']['y']) * h_h }
-			pos2 = {'x': (pos_data['pos']['x'] +learn_data['input_width'])* w_h, 'y': (pos_data['pos']['y'] + learn_data['input_height'])*h_h }
+			pos2 = {'x': (pos_data['pos']['x'] + input_data['input_width'])* w_h, 'y': (pos_data['pos']['y'] + input_data['input_height'])*h_h }
 			
 			add_flame(flamed_img, pos1, pos2)
 		flamed_img.show()
@@ -443,8 +543,7 @@ def add_flame(img, pos1, pos2, color = (255,0,0)):
 	
 #]
 # 
-def search_one(img):
-	global learn_data
+def search_one(learn_data, img):
 	pos_list = []
 	im_arr = before_filter_img(img)
 	im = Image.fromarray(im_arr*256.0)
@@ -453,21 +552,21 @@ def search_one(img):
 	print width
 	print height
 	max_result = 0.0
-	for y in range(height - learn_data['input_height'] + 1):
-		for x in range(width - learn_data['input_width'] + 1):
+	for y in range(height - input_data['input_height'] + 1):
+		for x in range(width - input_data['input_width'] + 1):
 			if x < 1:
 				continue
 		
-			sliced_img = im.crop((x, y, x + learn_data['input_width'], y+ learn_data['input_height']))
+			sliced_img = im.crop((x, y, x + input_data['input_width'], y+ input_data['input_height']))
 			arr = convert_arr_from_img(np.array(sliced_img)/256.0)
-			forward_all(arr, 0)
-			result = learn_data['result']
+			result = forward_all(learn_data, arr)
+			
 			if max_result < result:
 				max_result = result
 			pred = 0
 			if(result > learn_data['thres']):
 				pred = 1
-				near_index = get_near_pos({'x':x, 'y': y}, pos_list, learn_data['input_width'], learn_data['input_height'])
+				near_index = get_near_pos({'x':x, 'y': y}, pos_list, input_data['input_width'], input_data['input_height'])
 				if(near_index == -1): # 近いのがないときは新規登録
 
 					pos_data = {'pos' : {'x':x, 'y':y}, 'result':result}
@@ -499,9 +598,45 @@ def get_near_pos(pos, pos_list, width, height):
 	#near_index = -1
 	return near_index
 
+# 複数の検出機から最適なものを出す
+def multi_recognition():
+	global input_arr_size
+	multi_num = 10 # multi_num 種類を識別する
+	# データセット
+	data = import_cifar.import_cifar()
+	learn_data_set = []
+	test_data_set = []
+	for i in xrange(100):
+		data_set = {}
+		data_set['img'] = import_cifar.get_image_from_cifar(data['X_train'][i])
+		data_set['ans'] = [0] * multi_num
+		data_set['ans'][data['Y_train'][i]] = 1.0
+		data_set['arr'] = before_filter(data_set['img'])
+		learn_data_set.append(data_set)
+
+		data_set = {}
+		data_set['img'] = import_cifar.get_image_from_cifar(data['X_test'][i])
+		data_set['ans'] = [0] * multi_num
+		data_set['ans'][data['Y_test'][i]] = 1.0
+		data_set['arr'] = before_filter(data_set['img'])
+		test_data_set.append(data_set)
+	
+	# 入力画像一般情報	
+	input_data['input_arr_size'] = data_set['arr'].size
+	print "input_arr_size = " + str(input_data['input_arr_size'] )
+	learn_data = {}
+	start = time.time()
+	learn_multi(learn_data, learn_data_set)
+	elapsed_time = time.time() - start
+	print_W(learn_data)
+	print ("elapsed_time:{0}".format(elapsed_time)) + "[sec]"
+	test(learn_data, test_data_set)
 
 
-def main():
+	return 
+
+
+def one_recognition():
 	global TestDataSet
 	# データセット
 	#f_paths_k =  glob.glob('./Pictures/teach/koala/*')
@@ -511,8 +646,8 @@ def main():
 	for i in range(100):
 		f_paths_k.append("./CarData/TrainImages/pos-" + str(i) + ".pgm")
 		f_paths_o.append("./CarData/TrainImages/neg-" + str(i) + ".pgm")
-	data_set = make_data_set(f_paths_k, 1.0)
-	data_set +=  make_data_set(f_paths_o, 0.0)
+	data_set = make_data_set(f_paths_k, [1.0])
+	data_set +=  make_data_set(f_paths_o, [0.0])
 
 	# 無作為に学習データと検証データを選別
 	learn_data_set = []
@@ -543,15 +678,24 @@ def main():
 		data['name'] = path
 		search_data_set.append(data)
 
-	start = time.time()
-	learn(learn_data_set)
-	elapsed_time = time.time() - start
-	print_W()
-	print ("elapsed_time:{0}".format(elapsed_time)) + "[sec]"
-	test(test_data_set)
+	learn_data = {}
 
-	search(search_data_set)
+	start = time.time()
+	learn(learn_data, learn_data_set)
+	elapsed_time = time.time() - start
+	print_W(learn_data)
+	print ("elapsed_time:{0}".format(elapsed_time)) + "[sec]"
+	test(learn_data, test_data_set)
+
+	search(learn_data, search_data_set)
 	#test(learn_data_set)
+	return
+
+
+
+def main():
+	#one_recognition()
+	multi_recognition()
 	return
 
 if __name__ == '__main__':
