@@ -52,7 +52,11 @@ def get_image_from_cifar(arr):
     return  Image.fromarray(np.uint8(img_arr))
 
 def test():
+    names = ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"]
+    num = 7
     data = import_cifar()
-    arr = get_image_from_cifar(data['X_test'][20])
-    print arr.shape
+    arr = get_image_from_cifar(data['X_train'][num])
+    arr.show()
+    print names[data['Y_train'][num]]
+    #print arr.shape
   
